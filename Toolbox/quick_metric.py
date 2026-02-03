@@ -107,9 +107,15 @@ class QUICK:
         G_path = os.path.join(self.model_dir, f'{self.resume_iters}-G.ckpt')
         self.G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage), strict=False)
 
-    def compute_hik(self, real_img_path, dist_img_path):
+    def compute_hik(self, real_img_path, dist_img_path, return_maps=False):
         """
-        Compute HIK Similarity between image pairs
+        Compute HIK similarity between image pairs.
+
+        Returns a single similarity score by default. Set return_maps=True to
+        also return the internal map vectors.
         """
-        # backbone method to analyze and compute similarity score
-        return self.backbone.Quick_hik(real_img_path, dist_img_path)
+        result = self.backbone.Quick_hik(real_img_path, dist_img_path)
+        if isinstance(result, tuple) and len(result) == 2:
+            map_ref_sq_vec, score = result
+            return (map_ref_sq_vec, score) if return_maps else score
+        return result
