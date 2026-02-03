@@ -22,6 +22,7 @@ from skimage.filters import gaussian
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from misc.device import get_default_device
 
 
 def get_preds_fromhm(hm):
@@ -93,7 +94,7 @@ class AddCoordsTh(nn.Module):
         super(AddCoordsTh, self).__init__()
         self.with_r = with_r
         self.with_boundary = with_boundary
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        device = get_default_device()
 
         with torch.no_grad():
             x_coords = torch.arange(height).unsqueeze(1).expand(height, width).float()

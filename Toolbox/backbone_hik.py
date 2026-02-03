@@ -6,6 +6,7 @@ from Toolbox.model import Generator_Rx, StyleEncoder
 import torch
 import matplotlib.pyplot as plt
 from misc.wing import FAN
+from misc.device import resolve_device
 from random import randint
 import itertools
 
@@ -46,7 +47,7 @@ class Backbone(object):
         # Test configurations.
         self.test_iters = config["test_iters"]
         # Miscellaneous.
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = resolve_device(config.get("device"))
         # Directories.
         self.model_dir = config["model_save_dir"]
         self.output_msr = config["ref_image_dir"]
@@ -139,7 +140,7 @@ class Backbone(object):
         # =================================================================================== #
         #                                 Test  Begins                                         #
         # =================================================================================== #
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = resolve_device(self.device)
         with torch.no_grad():
             eps = 0.0001
             ## Ref Image ##

@@ -64,7 +64,7 @@ class AnalysisConfig:
 @dataclass
 class PerformanceConfig:
     """Configuration for performance optimization."""
-    device: str = "cpu"  # "cpu" or "cuda"
+    device: str = "cpu"  # "cpu", "cuda", or "mps"
     batch_size: int = 512
     use_cache: bool = True
     cache_size_mb: float = 500

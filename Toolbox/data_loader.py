@@ -10,6 +10,7 @@ from torch.utils import data
 from torch.utils.data.sampler import WeightedRandomSampler
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
+from misc.device import get_default_device
 torch.manual_seed(23)
 
 
@@ -186,7 +187,7 @@ class InputFetcher:
            loader_ref (torch.utils.data.DataLoader, optional):
            The reference DataLoader for fetching reference data. Defaults to None.
            latent_dim (int): The dimension of the latent vector space. Defaults to 16.
-           device (torch.device): The device where tensors will be moved (either 'cuda' or 'cpu').
+           device (torch.device): The device where tensors will be moved ("cuda", "mps", or "cpu").
            mode (str): Mode of operation. It can be used to
            specify the input-fetching mode or other custom operations.
     """
@@ -195,7 +196,7 @@ class InputFetcher:
         self.loader = loader
         self.loader_ref = loader_ref
         self.latent_dim = latent_dim
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = get_default_device()
         self.mode = mode
 
     def _fetch_inputs(self):
@@ -283,7 +284,7 @@ class InputFetcher_Val:
            loader_ref (torch.utils.data.DataLoader, optional): The reference
            DataLoader for fetching reference data. Defaults to None.
            latent_dim (int): The dimension of the latent vector space. Defaults to 16.
-           device (torch.device): The device where tensors will be moved (either 'cuda' or 'cpu').
+           device (torch.device): The device where tensors will be moved ("cuda", "mps", or "cpu").
            mode (str): Mode of operation. It can be used to specify
            the input-fetching mode or other custom operations.
     """
@@ -291,7 +292,7 @@ class InputFetcher_Val:
         self.loader = loader
         self.loader_ref = loader_ref
         self.latent_dim = latent_dim
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = get_default_device()
         self.mode = mode
 
     def _fetch_inputs(self):
