@@ -6,8 +6,11 @@ WHAT YOU GET:
   - patch_data.csv                  : per-patch scores (x0,y0,score,is_edge,region tags)
   - region_report.csv               : global/edge/center/corners stats (mean, std, median, P95, GM)
   - histogram_with_stats.png        : histogram + stats box (mean/std/median/P95/%bad)
+  - histogram_similarity_normalized.png : similarity histogram normalized to [0,1]
   - heatmap_pixelated_scores.png    : grid heatmap + numeric patch scores (per cell)
+  - heatmap_pixelated_similarity_normalized.png : grid heatmap with normalized similarity
   - heatmap_hybrid_scores.png       : smooth heatmap + grid + numeric patch scores
+  - heatmap_hybrid_similarity_normalized.png : smooth heatmap with normalized similarity
   - luma_ref.png / luma_cap.png     : linear luma (Rec.709) grayscale images
   - log_radiance_ref.png            : log10(luma) map for reference
   - log_radiance_cap.png            : log10(luma) map for capture
@@ -17,6 +20,7 @@ WHAT YOU GET:
 NOTES:
   - Images MUST be aligned and same resolution.
   - Score is "distance": higher = worse (you can flip if your ML is similarity).
+  - Normalized similarity plots map raw scores to [0,1] (1=more similar).
 
 HOW TO USE YOUR CUSTOM ML METRIC:
   - Replace `ml_metric_distance()` with your model call.
@@ -80,6 +84,20 @@ def _robust_minmax(x, lower_pct=1.0, upper_pct=99.0):
         vmin = float(np.min(arr))
         vmax = float(np.max(arr) + 1e-6)
     return vmin, vmax
+
+
+def normalize_scores(scores):
+    scores = np.asarray(scores, dtype=np.float32)
+    finite = scores[np.isfinite(scores)]
+    if finite.size == 0:
+        return np.zeros_like(scores), 0.0, 1.0
+    vmin = float(np.min(finite))
+    vmax = float(np.max(finite))
+    denom = max(vmax - vmin, 1e-6)
+    norm = (scores - vmin) / denom
+    norm = np.clip(norm, 0.0, 1.0)
+    norm[~np.isfinite(norm)] = 0.0
+    return norm, vmin, vmax
 
 
 def _clip_edge_band(edge_band, H, W):
@@ -519,10 +537,27 @@ def annotate_patch_scores(ax, coords_np, distances, patch_size,
         )
 
 
-def save_heatmap_pixelated(cap_np, coords_np, distances, H, W, P, edge_band, out_path,
-                           alpha=0.5, score_mode="all", score_topk=30, edge_mask=None):
+def save_heatmap_pixelated(
+    cap_np,
+    coords_np,
+    distances,
+    H,
+    W,
+    P,
+    edge_band,
+    out_path,
+    alpha=0.5,
+    score_mode="all",
+    score_topk=30,
+    edge_mask=None,
+    title="Pixelated Heatmap + Patch Scores (higher=worse)",
+    score_range=None,
+):
     heat, mask = _accumulate_patch_scores(coords_np, distances, H, W, P)
-    vmin, vmax = _robust_minmax(distances, 5.0, 95.0)
+    if score_range is None:
+        vmin, vmax = _robust_minmax(distances, 5.0, 95.0)
+    else:
+        vmin, vmax = score_range
     denom = max(vmax - vmin, 1e-6)
     hm = np.clip((heat - vmin) / denom, 0, 1)
     alpha_map = np.where(mask, alpha, 0.0).astype(np.float32)
@@ -551,14 +586,28 @@ def save_heatmap_pixelated(cap_np, coords_np, distances, H, W, P, edge_band, out
     ax.set_xlim(0, W)
     ax.set_ylim(H, 0)
     ax.axis("off")
-    ax.set_title("Pixelated Heatmap + Patch Scores (higher=worse)", fontsize=12, weight="bold")
+    ax.set_title(title, fontsize=12, weight="bold")
     fig.tight_layout(pad=0.2)
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
 
 
-def save_heatmap_hybrid(cap_np, coords_np, distances, H, W, P, edge_band, out_path,
-                        alpha=0.45, score_mode="all", score_topk=30, edge_mask=None):
+def save_heatmap_hybrid(
+    cap_np,
+    coords_np,
+    distances,
+    H,
+    W,
+    P,
+    edge_band,
+    out_path,
+    alpha=0.45,
+    score_mode="all",
+    score_topk=30,
+    edge_mask=None,
+    title="Hybrid Heatmap (smooth+grid) + Patch Scores",
+    score_range=None,
+):
     # Smooth splat (simple gaussian-ish kernel)
     heat = np.zeros((H, W), np.float32)
     wgt = np.zeros((H, W), np.float32)
@@ -577,7 +626,10 @@ def save_heatmap_hybrid(cap_np, coords_np, distances, H, W, P, edge_band, out_pa
     mask = wgt > 1e-6
     heat = np.divide(heat, wgt, out=np.zeros_like(heat), where=mask)
 
-    vmin, vmax = _robust_minmax(distances, 5.0, 95.0)
+    if score_range is None:
+        vmin, vmax = _robust_minmax(distances, 5.0, 95.0)
+    else:
+        vmin, vmax = score_range
     denom = max(vmax - vmin, 1e-6)
     hm = np.clip((heat - vmin) / denom, 0, 1)
     alpha_map = np.where(mask, alpha, 0.0).astype(np.float32)
@@ -607,7 +659,7 @@ def save_heatmap_hybrid(cap_np, coords_np, distances, H, W, P, edge_band, out_pa
     ax.set_xlim(0, W)
     ax.set_ylim(H, 0)
     ax.axis("off")
-    ax.set_title("Hybrid Heatmap (smooth+grid) + Patch Scores", fontsize=12, weight="bold")
+    ax.set_title(title, fontsize=12, weight="bold")
     fig.tight_layout(pad=0.2)
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -617,7 +669,16 @@ def save_heatmap_hybrid(cap_np, coords_np, distances, H, W, P, edge_band, out_pa
 # Histogram + stats on same plot
 # =============================================================================
 
-def plot_histogram_with_stats(scores, out_path, title="Patch Score Histogram", threshold=None, bins=60):
+def plot_histogram_with_stats(
+    scores,
+    out_path,
+    title="Patch Score Histogram",
+    threshold=None,
+    bins=60,
+    score_label="Patch distance score (higher = worse)",
+    score_range=None,
+    stats_extra=None,
+):
     scores = np.asarray(scores, dtype=np.float32)
 
     mean = float(np.mean(scores))
@@ -637,7 +698,9 @@ def plot_histogram_with_stats(scores, out_path, title="Patch Score Histogram", t
         ax.axvline(float(threshold), linestyle="-", linewidth=2, label=f"BadThr {float(threshold):.4f}")
         pct_bad = 100.0 * float(np.mean(scores >= float(threshold)))
 
-    ax.set_xlabel("Patch distance score (higher = worse)")
+    ax.set_xlabel(score_label)
+    if score_range is not None:
+        ax.set_xlim(score_range)
     ax.set_ylabel("Count of patches")
     ax.set_title(title, fontsize=13, weight="bold")
     ax.legend(fontsize=9)
@@ -650,6 +713,8 @@ def plot_histogram_with_stats(scores, out_path, title="Patch Score Histogram", t
     )
     if pct_bad is not None:
         stats += f"\n>=BadThr: {pct_bad:.2f}%"
+    if stats_extra:
+        stats += f"\n{stats_extra}"
 
     ax.text(
         0.98, 0.95, stats,
@@ -857,6 +922,10 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
     # Score
     print("Scoring patches (batched)...")
     distances = compute_distances_batched(ref_patches, cap_patches, batch_size=batch, use_ml=use_ml)
+    score_is_similarity = bool(cfg.get("score_is_similarity", use_ml))
+    similarity_norm, score_min, score_max = normalize_scores(distances)
+    if not score_is_similarity:
+        similarity_norm = 1.0 - similarity_norm
 
     # Regions
     print("Computing region stats...")
@@ -893,6 +962,18 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
     plot_histogram_with_stats(distances, hist_path, threshold=bad_thr)
     print(f"Saved: {hist_path}")
 
+    hist_norm_path = os.path.join(output_dir, "histogram_similarity_normalized.png")
+    plot_histogram_with_stats(
+        similarity_norm,
+        hist_norm_path,
+        title="Normalized Patch Similarity Histogram",
+        threshold=None,
+        score_label="Normalized similarity (0=less similar, 1=more similar)",
+        score_range=(0.0, 1.0),
+        stats_extra=f"Raw min: {score_min:.4f}\nRaw max: {score_max:.4f}",
+    )
+    print(f"Saved: {hist_norm_path}")
+
     # Visuals + analysis maps
     ref_np = ref.detach().cpu().permute(1, 2, 0).numpy()
     cap_np = cap.detach().cpu().permute(1, 2, 0).numpy()
@@ -907,12 +988,48 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
         save_heatmap_pixelated(cap_np, coords_np, distances, H, W, P, edge_band, outp,
                                alpha=alpha, score_mode=score_mode, score_topk=score_topk, edge_mask=masks["edge"])
         print(f"Saved: {outp}")
+        outp_norm = os.path.join(output_dir, "heatmap_pixelated_similarity_normalized.png")
+        save_heatmap_pixelated(
+            cap_np,
+            coords_np,
+            similarity_norm,
+            H,
+            W,
+            P,
+            edge_band,
+            outp_norm,
+            alpha=alpha,
+            score_mode=score_mode,
+            score_topk=score_topk,
+            edge_mask=masks["edge"],
+            title="Pixelated Heatmap + Normalized Similarity (0=low, 1=high)",
+            score_range=(0.0, 1.0),
+        )
+        print(f"Saved: {outp_norm}")
 
     if heatmap_style in ("hybrid", "all"):
         outp = os.path.join(output_dir, "heatmap_hybrid_scores.png")
         save_heatmap_hybrid(cap_np, coords_np, distances, H, W, P, edge_band, outp,
                             alpha=alpha, score_mode=score_mode, score_topk=score_topk, edge_mask=masks["edge"])
         print(f"Saved: {outp}")
+        outp_norm = os.path.join(output_dir, "heatmap_hybrid_similarity_normalized.png")
+        save_heatmap_hybrid(
+            cap_np,
+            coords_np,
+            similarity_norm,
+            H,
+            W,
+            P,
+            edge_band,
+            outp_norm,
+            alpha=alpha,
+            score_mode=score_mode,
+            score_topk=score_topk,
+            edge_mask=masks["edge"],
+            title="Hybrid Heatmap + Normalized Similarity (0=low, 1=high)",
+            score_range=(0.0, 1.0),
+        )
+        print(f"Saved: {outp_norm}")
 
     # Worst patch crops (simple + helpful)
     if topn_patches > 0:
