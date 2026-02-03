@@ -1,0 +1,39 @@
+
+# Model configuration
+c_dim: 5  # dimension of domain labels (1st dataset)
+c2_dim: 5  # dimension of domain labels (2nd dataset)
+style_dim: 64  # dimension of domain labels (2nd dataset)
+image_data_crop_size: 128  # crop size for the image_data dataset
+image_size: 128  # image resolution
+g_conv_dim: 64  # number of conv filters in the first layer of G
+d_conv_dim: 64  # number of conv filters in the first layer of D
+g_repeat_num: 6  # number of residual blocks in G
+d_repeat_num: 6  # number of stride conv layers in D
+num_domains: 2  # number of domains
+eps: 1e-6
+
+# Training configuration
+dataset: image_data  # dataset choice
+batch_size: 1  # mini-batch size
+w_hpf: 1.0  # filter High Pass
+resume_iters: 1740000  # resume training from this step
+# Test configuration
+test_iters: 1740000  # test model from this step
+
+# Miscellaneous
+num_workers: 0
+limit: 4
+
+# Inference Directories
+ref_image_dir: "./data/ref_dir"
+distort_image_dir: "./data/dist_dir"
+
+# Validation Directories
+val_image_dir: "./data/val"
+
+# Test result Directories
+test_result_dir: "./data/scores_dir"
+
+# Weight Directories
+model_save_dir: "/Users/system_box/Documents/Tasks_DPE/Quick/weights_2"
+wing_path: "/Users/system_box/Documents/Tasks_DPE/Quick/weights_2/wing.ckpt"
