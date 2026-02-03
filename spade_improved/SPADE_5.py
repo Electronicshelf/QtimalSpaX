@@ -34,6 +34,7 @@ from PIL import Image
 from matplotlib.patches import Rectangle
 from Toolbox.quick_metric import QUICK
 from misc.utils import load_config, get_image_pairs, save_scores_to_file
+from misc.device import resolve_device
 
 # =============================================================================
 # Utilities
@@ -1004,7 +1005,12 @@ def main():
     parser.add_argument("--edge_band", type=int, default=64, help="Edge band width (pixels)")
 
     # Processing parameters
-    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"], help="cpu or cuda")
+    parser.add_argument(
+        "--device",
+        default="auto",
+        choices=["auto", "cpu", "cuda", "mps"],
+        help="auto, cpu, cuda, or mps"
+    )
     parser.add_argument("--batch", type=int, default=512, help="Patch scoring batch size")
 
     # Heatmaps
@@ -1062,9 +1068,12 @@ def main():
     os.makedirs(args.out, exist_ok=True)
 
     # ---- device availability ----
-    if args.device == "cuda" and not torch.cuda.is_available():
+    requested_device = args.device
+    args.device = resolve_device(requested_device)
+    if requested_device == "cuda" and args.device.type != "cuda":
         print("WARNING: CUDA requested but not available. Falling back to CPU.")
-        args.device = "cpu"
+    if requested_device == "mps" and args.device.type != "mps":
+        print("WARNING: MPS requested but not available. Falling back to CPU.")
 
     cfg = {
         "patch_size": args.patch,

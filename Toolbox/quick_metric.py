@@ -5,6 +5,7 @@ import torch.nn as nn
 from Toolbox.backbone_hik import Backbone
 from Toolbox.model import Generator_Rx, StyleEncoder
 from misc.wing import FAN
+from misc.device import resolve_device
 os.environ['USE_NNPACK'] = '0'
 
 _BACKBONE_CACHE = {}
@@ -60,7 +61,7 @@ class QUICK:
         self.dataset = config["dataset"]
         self.batch_size = config["batch_size"]
         self.resume_iters = config["resume_iters"]
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  # device selection
+        self.device = resolve_device(config.get("device"))  # device selection
 
         # Optional quick-model load (skip heavy weights by default).
         self.load_quick_models = bool(config.get("load_quick_models", False))

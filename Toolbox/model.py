@@ -9,7 +9,8 @@ import random
 random.seed(1234)
 np.random.seed(1234)
 torch.manual_seed(1234)
-torch.cuda.manual_seed(1234)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(1234)
 
 class ResidualBlock(nn.Module):
     """
