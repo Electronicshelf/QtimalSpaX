@@ -274,7 +274,18 @@ def ml_metric_distance(ref_patches, cap_patches):
     return default_distance_metric(ref_patches, cap_patches)
 
 
-def compute_distances_batched(ref_patches, cap_patches, batch_size, use_ml=True):
+def _extract_quick_score(result):
+    if isinstance(result, tuple):
+        result = result[-1]
+    if isinstance(result, torch.Tensor):
+        result = result.detach().cpu()
+        if result.numel() == 1:
+            return float(result.item())
+        return float(result.mean().item())
+    return float(result)
+
+
+def compute_distances_batched(ref_patches, cap_patches, batch_size, use_ml=True, overall_pair=None):
     """
     returns numpy float32 distances (N,)
     """
@@ -284,13 +295,21 @@ def compute_distances_batched(ref_patches, cap_patches, batch_size, use_ml=True)
     config = load_config(config_path)
     quick = QUICK(config)
     scorer = ml_metric_distance if use_ml else default_distance_metric
+    overall_score = None
+    if overall_pair is not None:
+        overall_score = _extract_quick_score(
+            quick.compute_hik(overall_pair[0], overall_pair[1], return_maps=True)
+        )
     ds = []
     for i in range(0, len(ref_patches), batch_size):
         r = ref_patches[i:i+batch_size]
         c = cap_patches[i:i+batch_size]
         similarity_score = quick.compute_hik(r, c)
         ds.append(similarity_score)
-    return torch.cat(ds, dim=0).numpy().astype(np.float32)
+    distances = torch.cat(ds, dim=0).numpy().astype(np.float32)
+    if overall_pair is not None:
+        return distances, overall_score
+    return distances
 
 
 # =============================================================================
@@ -349,15 +368,19 @@ def compute_region_stats(distances, masks):
 # Bad patch marking + simple clustering on patch grid
 # =============================================================================
 
-def mark_bad(distances, mode="percentile", bad_percentile=95.0, bad_absolute=0.05):
+def mark_bad(distances, mode="percentile", bad_percentile=95.0, bad_absolute=0.05, higher_is_better=False):
+    distances = np.asarray(distances, dtype=np.float32)
     if mode == "percentile":
-        thr = float(np.percentile(distances, bad_percentile))
-        bad = distances >= thr
+        if higher_is_better:
+            thr = float(np.percentile(distances, 100.0 - bad_percentile))
+            bad = distances <= thr
+        else:
+            thr = float(np.percentile(distances, bad_percentile))
+            bad = distances >= thr
         return bad, thr
-    else:
-        thr = float(bad_absolute)
-        bad = distances >= thr
-        return bad, thr
+    thr = float(bad_absolute)
+    bad = distances <= thr if higher_is_better else distances >= thr
+    return bad, thr
 
 
 def build_patch_grid(coords_np, H, W, P, S):
@@ -618,7 +641,16 @@ def save_heatmap_hybrid(cap_np, coords_np, distances, H, W, P, edge_band, out_pa
 # Histogram + stats on same plot
 # =============================================================================
 
-def plot_histogram_with_stats(scores, out_path, title="Patch Score Histogram", threshold=None, bins=60):
+def plot_histogram_with_stats(
+    scores,
+    out_path,
+    title="Patch Score Histogram",
+    threshold=None,
+    bins=60,
+    overall_score=None,
+    overall_label="Quick score",
+    higher_is_better=False,
+):
     scores = np.asarray(scores, dtype=np.float32)
 
     mean = float(np.mean(scores))
@@ -633,12 +665,29 @@ def plot_histogram_with_stats(scores, out_path, title="Patch Score Histogram", t
     ax.axvline(median, linestyle="-.", linewidth=2, label=f"Median {median:.4f}")
     ax.axvline(p95, linestyle=":", linewidth=2, label=f"P95 {p95:.4f}")
 
+    if overall_score is not None:
+        overall_val = float(overall_score)
+        ax.axvline(
+            overall_val,
+            linestyle="-",
+            linewidth=2,
+            color="purple",
+            label=f"{overall_label} {overall_val:.4f}",
+        )
+
     pct_bad = None
     if threshold is not None:
-        ax.axvline(float(threshold), linestyle="-", linewidth=2, label=f"BadThr {float(threshold):.4f}")
-        pct_bad = 100.0 * float(np.mean(scores >= float(threshold)))
+        thr_val = float(threshold)
+        ax.axvline(thr_val, linestyle="-", linewidth=2, label=f"BadThr {thr_val:.4f}")
+        if higher_is_better:
+            pct_bad = 100.0 * float(np.mean(scores <= thr_val))
+        else:
+            pct_bad = 100.0 * float(np.mean(scores >= thr_val))
 
-    ax.set_xlabel("Patch distance score (higher = worse)")
+    if higher_is_better:
+        ax.set_xlabel("Patch similarity score (higher = better)")
+    else:
+        ax.set_xlabel("Patch distance score (higher = worse)")
     ax.set_ylabel("Count of patches")
     ax.set_title(title, fontsize=13, weight="bold")
     ax.legend(fontsize=9)
@@ -649,8 +698,11 @@ def plot_histogram_with_stats(scores, out_path, title="Patch Score Histogram", t
         f"Std    : {std:.4f}\n"
         f"P95    : {p95:.4f}"
     )
+    if overall_score is not None:
+        stats += f"\n{overall_label}: {float(overall_score):.4f}"
     if pct_bad is not None:
-        stats += f"\n>=BadThr: {pct_bad:.2f}%"
+        bad_label = "<=BadThr" if higher_is_better else ">=BadThr"
+        stats += f"\n{bad_label}: {pct_bad:.2f}%"
 
     ax.text(
         0.98, 0.95, stats,
@@ -825,6 +877,7 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
     min_cluster = int(cfg["min_cluster"])
     thresholds = cfg["thresholds"]
     use_ml = bool(cfg.get("use_ml", True))
+    higher_is_better = bool(cfg.get("score_is_similarity", True))
 
     print("\n============================================================")
     print("OLED DISPLAY QUALITY VALIDATOR (Simple + ML-pluggable)")
@@ -857,7 +910,13 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
 
     # Score
     print("Scoring patches (batched)...")
-    distances = compute_distances_batched(ref_patches, cap_patches, batch_size=batch, use_ml=use_ml)
+    distances, overall_score = compute_distances_batched(
+        ref_patches,
+        cap_patches,
+        batch_size=batch,
+        use_ml=use_ml,
+        overall_pair=(ref.unsqueeze(0), cap.unsqueeze(0)),
+    )
 
     # Regions
     print("Computing region stats...")
@@ -889,9 +948,22 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
     print(f"Saved: {patch_path}")
 
     # Bad threshold + histogram
-    bad_mask, bad_thr = mark_bad(distances, mode=bad_mode, bad_percentile=bad_percentile, bad_absolute=bad_absolute)
+    bad_mask, bad_thr = mark_bad(
+        distances,
+        mode=bad_mode,
+        bad_percentile=bad_percentile,
+        bad_absolute=bad_absolute,
+        higher_is_better=higher_is_better,
+    )
     hist_path = os.path.join(output_dir, "histogram_with_stats.png")
-    plot_histogram_with_stats(distances, hist_path, threshold=bad_thr)
+    plot_histogram_with_stats(
+        distances,
+        hist_path,
+        threshold=bad_thr,
+        overall_score=overall_score,
+        overall_label="Quick score",
+        higher_is_better=higher_is_better,
+    )
     print(f"Saved: {hist_path}")
 
     # Visuals + analysis maps
