@@ -16,7 +16,7 @@ WHAT YOU GET:
 
 NOTES:
   - Images MUST be aligned and same resolution.
-  - Score is "distance": higher = worse (you can flip if your ML is similarity).
+  - Score defaults to similarity (higher = better). Use --score_is_distance to flip.
 
 HOW TO USE YOUR CUSTOM ML METRIC:
   - Replace `ml_metric_distance()` with your model call.
@@ -476,7 +476,7 @@ def cluster_bad_patches(coords_np, distances, bad_mask, H, W, P, S, min_cluster=
 def annotate_patch_scores(ax, coords_np, distances, patch_size,
                           mode="all", topk=30, edge_mask=None,
                           text_frac=0.35, min_px=12, max_px=72,
-                          box_alpha=0.85):
+                          box_alpha=0.85, higher_is_better=False):
     """
     DPI-aware text that scales with patch size so it is readable in big cells.
     """
@@ -490,7 +490,8 @@ def annotate_patch_scores(ax, coords_np, distances, patch_size,
         if idx.size == 0:
             return
     elif mode == "topk":
-        idx = np.argsort(distances)[-topk:]
+        order = np.argsort(distances)
+        idx = order[:topk] if higher_is_better else order[-topk:]
     elif mode == "edge_topk":
         if edge_mask is None:
             raise ValueError("edge_mask required for edge_topk")
@@ -498,7 +499,10 @@ def annotate_patch_scores(ax, coords_np, distances, patch_size,
         if edge_idx.size == 0:
             return
         order = edge_idx[np.argsort(distances[edge_idx])]
-        idx = order[-min(topk, order.size):]
+        if higher_is_better:
+            idx = order[:min(topk, order.size)]
+        else:
+            idx = order[-min(topk, order.size):]
     else:
         raise ValueError("score_mode must be all/all_sparse/topk/edge_topk")
 
@@ -543,7 +547,8 @@ def annotate_patch_scores(ax, coords_np, distances, patch_size,
 
 
 def save_heatmap_pixelated(cap_np, coords_np, distances, H, W, P, edge_band, out_path,
-                           alpha=0.5, score_mode="all", score_topk=30, edge_mask=None):
+                           alpha=0.5, score_mode="all", score_topk=30, edge_mask=None,
+                           higher_is_better=False):
     heat, mask = _accumulate_patch_scores(coords_np, distances, H, W, P)
     vmin, vmax = _robust_minmax(distances, 5.0, 95.0)
     denom = max(vmax - vmin, 1e-6)
@@ -569,19 +574,24 @@ def save_heatmap_pixelated(cap_np, coords_np, distances, H, W, P, edge_band, out
                                facecolor="none", linestyle="--"))
 
     annotate_patch_scores(ax, coords_np, distances, P,
-                          mode=score_mode, topk=score_topk, edge_mask=edge_mask)
+                          mode=score_mode, topk=score_topk, edge_mask=edge_mask,
+                          higher_is_better=higher_is_better)
 
     ax.set_xlim(0, W)
     ax.set_ylim(H, 0)
     ax.axis("off")
-    ax.set_title("Pixelated Heatmap + Patch Scores (higher=worse)", fontsize=12, weight="bold")
+    if higher_is_better:
+        ax.set_title("Pixelated Heatmap + Patch Scores (higher=better)", fontsize=12, weight="bold")
+    else:
+        ax.set_title("Pixelated Heatmap + Patch Scores (higher=worse)", fontsize=12, weight="bold")
     fig.tight_layout(pad=0.2)
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
 
 
 def save_heatmap_hybrid(cap_np, coords_np, distances, H, W, P, edge_band, out_path,
-                        alpha=0.45, score_mode="all", score_topk=30, edge_mask=None):
+                        alpha=0.45, score_mode="all", score_topk=30, edge_mask=None,
+                        higher_is_better=False):
     # Smooth splat (simple gaussian-ish kernel)
     heat = np.zeros((H, W), np.float32)
     wgt = np.zeros((H, W), np.float32)
@@ -625,7 +635,8 @@ def save_heatmap_hybrid(cap_np, coords_np, distances, H, W, P, edge_band, out_pa
                                facecolor="none", linestyle="--"))
 
     annotate_patch_scores(ax, coords_np, distances, P,
-                          mode=score_mode, topk=score_topk, edge_mask=edge_mask)
+                          mode=score_mode, topk=score_topk, edge_mask=edge_mask,
+                          higher_is_better=higher_is_better)
 
     ax.set_xlim(0, W)
     ax.set_ylim(H, 0)
@@ -775,7 +786,7 @@ def save_log_radiance_map(luma, out_path, title="Log Radiance (log10 Y)"):
 
 
 def save_contour_map(cap_np, coords_np, distances, H, W, P, S, edge_band, out_path,
-                     levels=12, overlay_alpha=0.45, cmap="inferno"):
+                     levels=12, overlay_alpha=0.45, cmap="inferno", higher_is_better=False):
     grid, ys_sorted, xs_sorted = build_patch_grid(coords_np, H, W, P, S)
     score_grid = np.full(grid.shape, np.nan, dtype=np.float32)
     valid = grid >= 0
@@ -817,18 +828,22 @@ def save_contour_map(cap_np, coords_np, distances, H, W, P, S, edge_band, out_pa
         ax.add_patch(Rectangle((x0, y0), width, height,
                                linewidth=2.0, edgecolor="cyan",
                                facecolor="none", linestyle="--"))
-    ax.set_title("Contour Map of Patch Scores (higher=worse)", fontsize=12, weight="bold")
+    if higher_is_better:
+        ax.set_title("Contour Map of Patch Scores (higher=better)", fontsize=12, weight="bold")
+    else:
+        ax.set_title("Contour Map of Patch Scores (higher=worse)", fontsize=12, weight="bold")
     ax.set_xlim(0, W)
     ax.set_ylim(H, 0)
     ax.axis("off")
     cbar = fig.colorbar(cf, ax=ax, fraction=0.03, pad=0.01)
-    cbar.set_label("Patch distance")
+    cbar.set_label("Patch similarity" if higher_is_better else "Patch distance")
     fig.tight_layout(pad=0.2)
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
 
 
-def generate_analysis_maps(ref_np, cap_np, coords_np, distances, H, W, P, S, edge_band, output_dir):
+def generate_analysis_maps(ref_np, cap_np, coords_np, distances, H, W, P, S, edge_band, output_dir,
+                           higher_is_better=False):
     luma_ref = compute_luma(ref_np, linearize=True)
     luma_cap = compute_luma(cap_np, linearize=True)
 
@@ -843,7 +858,8 @@ def generate_analysis_maps(ref_np, cap_np, coords_np, distances, H, W, P, S, edg
     save_log_radiance_map(luma_cap, log_cap_path, title="Capture Log Radiance (log10 Y)")
 
     contour_path = os.path.join(output_dir, "contour_map_scores.png")
-    save_contour_map(cap_np, coords_np, distances, H, W, P, S, edge_band, contour_path)
+    save_contour_map(cap_np, coords_np, distances, H, W, P, S, edge_band, contour_path,
+                     higher_is_better=higher_is_better)
 
     return {
         "luma_ref": luma_ref_path,
@@ -885,7 +901,9 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
     print(f"ref: {ref_path}")
     print(f"cap: {cap_path}")
     print(f"out: {output_dir}")
+    score_label = "similarity (higher=better)" if higher_is_better else "distance (higher=worse)"
     print(f"P={P} S={S} edge_band={edge_band} device={device} batch={batch} ML={use_ml}")
+    print(f"Score mode: {score_label}")
     print("============================================================\n")
 
     ref = load_image_rgb(ref_path, device)
@@ -973,26 +991,32 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
     cap_np = cap.detach().cpu().permute(1, 2, 0).numpy()
 
     print("Generating luma/log-radiance/contour maps...")
-    analysis_outputs = generate_analysis_maps(ref_np, cap_np, coords_np, distances, H, W, P, S, edge_band, output_dir)
+    analysis_outputs = generate_analysis_maps(
+        ref_np, cap_np, coords_np, distances, H, W, P, S, edge_band, output_dir,
+        higher_is_better=higher_is_better,
+    )
     for path in analysis_outputs.values():
         print(f"Saved: {path}")
 
     if heatmap_style in ("pixelated", "all"):
         outp = os.path.join(output_dir, "heatmap_pixelated_scores.png")
         save_heatmap_pixelated(cap_np, coords_np, distances, H, W, P, edge_band, outp,
-                               alpha=alpha, score_mode=score_mode, score_topk=score_topk, edge_mask=masks["edge"])
+                               alpha=alpha, score_mode=score_mode, score_topk=score_topk,
+                               edge_mask=masks["edge"], higher_is_better=higher_is_better)
         print(f"Saved: {outp}")
 
     if heatmap_style in ("hybrid", "all"):
         outp = os.path.join(output_dir, "heatmap_hybrid_scores.png")
         save_heatmap_hybrid(cap_np, coords_np, distances, H, W, P, edge_band, outp,
-                            alpha=alpha, score_mode=score_mode, score_topk=score_topk, edge_mask=masks["edge"])
+                            alpha=alpha, score_mode=score_mode, score_topk=score_topk,
+                            edge_mask=masks["edge"], higher_is_better=higher_is_better)
         print(f"Saved: {outp}")
 
     # Worst patch crops (simple + helpful)
     if topn_patches > 0:
         print(f"Saving top-{topn_patches} worst patches...")
-        idx = np.argsort(distances)[-topn_patches:][::-1]
+        order = np.argsort(distances)
+        idx = order[:topn_patches] if higher_is_better else order[-topn_patches:][::-1]
         crops_dir = os.path.join(output_dir, "worst_patches")
         ensure_dir(crops_dir)
 
@@ -1034,7 +1058,11 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
             print(f"{region:>10}: mean={r['mean']:.5f} std={r['std']:.5f} P95={r['P95']:.5f} GM={r['GM']:.5f} N={r['count']}")
     bad_pct = 100.0 * float(np.mean(bad_mask))
     bad_dir = "<=thr" if higher_is_better else ">=thr"
-    print(f"Bad threshold ({bad_mode}): {bad_thr:.5f}   bad%({bad_dir})={bad_pct:.2f}%")
+    if bad_mode == "percentile" and higher_is_better:
+        mode_label = "percentile (low tail)"
+    else:
+        mode_label = bad_mode
+    print(f"Bad threshold ({mode_label}): {bad_thr:.5f}   bad%({bad_dir})={bad_pct:.2f}%")
     print("=================================================\n")
 
 
@@ -1105,14 +1133,19 @@ def main():
     # Metric selection
     parser.add_argument("--use_ml", action="store_true", help="Use your custom ML metric hook")
     parser.add_argument("--use_baseline", action="store_true", help="Force baseline metric (ignore ML)")
+    parser.add_argument(
+        "--score_is_distance",
+        action="store_true",
+        help="Interpret scores as distance (higher = worse). Default is similarity.",
+    )
 
     # Clustering thresholds (local)
     parser.add_argument("--bad_mode", default="percentile", choices=["percentile", "absolute"],
                         help="How to mark 'bad' patches for clustering")
     parser.add_argument("--bad_percentile", type=float, default=95.0,
-                        help="If bad_mode=percentile: patches >= this percentile are bad")
+                        help="If bad_mode=percentile: upper tail if distance, lower tail if similarity")
     parser.add_argument("--bad_absolute", type=float, default=0.05,
-                        help="If bad_mode=absolute: patches >= this distance are bad")
+                        help="If bad_mode=absolute: >=thr for distance, <=thr for similarity")
     parser.add_argument("--min_cluster", type=int, default=4,
                         help="Minimum connected bad patches to count as a defect cluster")
 
@@ -1166,7 +1199,7 @@ def main():
         "bad_percentile": args.bad_percentile,
         "bad_absolute": args.bad_absolute,
         "min_cluster": args.min_cluster,
-        "score_is_similarity": True,
+        "score_is_similarity": not args.score_is_distance,
         "thresholds": {
             "good": 0.01,     # keep your defaults here
             "warning": 0.05,
