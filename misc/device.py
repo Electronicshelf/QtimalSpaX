@@ -2,7 +2,11 @@ import torch
 
 
 def _mps_available():
-    return hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    if not hasattr(torch.backends, "mps"):
+        return False
+    is_built = getattr(torch.backends.mps, "is_built", lambda: False)()
+    is_available = torch.backends.mps.is_available()
+    return is_built and is_available
 
 
 def get_default_device():
