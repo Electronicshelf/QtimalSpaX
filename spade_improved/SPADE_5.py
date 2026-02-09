@@ -678,7 +678,8 @@ def plot_histogram_with_stats(
     pct_bad = None
     if threshold is not None:
         thr_val = float(threshold)
-        ax.axvline(thr_val, linestyle="-", linewidth=2, label=f"BadThr {thr_val:.4f}")
+        thr_label = "<=BadThr" if higher_is_better else ">=BadThr"
+        ax.axvline(thr_val, linestyle="-", linewidth=2, label=f"{thr_label} {thr_val:.4f}")
         if higher_is_better:
             pct_bad = 100.0 * float(np.mean(scores <= thr_val))
         else:
@@ -956,9 +957,11 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
         higher_is_better=higher_is_better,
     )
     hist_path = os.path.join(output_dir, "histogram_with_stats.png")
+    hist_title = "Patch Similarity Histogram" if higher_is_better else "Patch Distance Histogram"
     plot_histogram_with_stats(
         distances,
         hist_path,
+        title=hist_title,
         threshold=bad_thr,
         overall_score=overall_score,
         overall_label="Quick score",
@@ -1030,7 +1033,9 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
         if region in key:
             r = key[region]
             print(f"{region:>10}: mean={r['mean']:.5f} std={r['std']:.5f} P95={r['P95']:.5f} GM={r['GM']:.5f} N={r['count']}")
-    print(f"Bad threshold ({bad_mode}): {bad_thr:.5f}   bad%={100*np.mean(bad_mask):.2f}%")
+    bad_pct = 100.0 * float(np.mean(bad_mask))
+    bad_dir = "<=thr" if higher_is_better else ">=thr"
+    print(f"Bad threshold ({bad_mode}): {bad_thr:.5f}   bad%({bad_dir})={bad_pct:.2f}%")
     print("=================================================\n")
 
 
@@ -1162,6 +1167,7 @@ def main():
         "bad_percentile": args.bad_percentile,
         "bad_absolute": args.bad_absolute,
         "min_cluster": args.min_cluster,
+        "score_is_similarity": True,
         "thresholds": {
             "good": 0.01,     # keep your defaults here
             "warning": 0.05,
