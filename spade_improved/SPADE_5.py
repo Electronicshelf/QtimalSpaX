@@ -287,14 +287,13 @@ def _extract_quick_score(result):
 
 def compute_distances_batched(ref_patches, cap_patches, batch_size, use_ml=True, overall_pair=None):
     """
-    returns numpy float32 distances (N,)
+    returns numpy float32 scores (N,)
     """
     # Load config from YAML
     config_path = "/Users/system_box/PycharmProjects/QtimalSpaX/config.yaml"
 
     config = load_config(config_path)
     quick = QUICK(config)
-    scorer = ml_metric_distance if use_ml else default_distance_metric
     overall_score = None
     if overall_pair is not None:
         overall_score = _extract_quick_score(
