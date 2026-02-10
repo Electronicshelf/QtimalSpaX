@@ -7,6 +7,10 @@ import torch
 import matplotlib.pyplot as plt
 from misc.wing import FAN
 from misc.device import resolve_device
+try:
+    torch.backends.nnpack.enabled = False
+except Exception:
+    pass
 from random import randint
 import itertools
 

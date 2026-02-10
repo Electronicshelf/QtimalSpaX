@@ -7,6 +7,10 @@ from Toolbox.model import Generator_Rx, StyleEncoder
 from misc.wing import FAN
 from misc.device import resolve_device
 os.environ['USE_NNPACK'] = '0'
+try:
+    torch.backends.nnpack.enabled = False
+except Exception:
+    pass
 
 _BACKBONE_CACHE = {}
 
