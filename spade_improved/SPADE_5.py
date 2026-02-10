@@ -483,6 +483,8 @@ def annotate_patch_scores(ax, coords_np, distances, patch_size,
     coords_np = np.asarray(coords_np)
     distances = np.asarray(distances)
 
+    if mode == "none":
+        return
     if mode == "all":
         idx = np.arange(len(distances))
     elif mode == "all_sparse":
@@ -504,7 +506,7 @@ def annotate_patch_scores(ax, coords_np, distances, patch_size,
         else:
             idx = order[-min(topk, order.size):]
     else:
-        raise ValueError("score_mode must be all/all_sparse/topk/edge_topk")
+        raise ValueError("score_mode must be none/all/all_sparse/topk/edge_topk")
 
     dpi = float(ax.figure.dpi) if ax.figure is not None else 150.0
     if ax.figure is not None:
@@ -894,6 +896,8 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
     thresholds = cfg["thresholds"]
     use_ml = bool(cfg.get("use_ml", True))
     higher_is_better = bool(cfg.get("score_is_similarity", True))
+    generate_visuals = bool(cfg.get("generate_visuals", True))
+    generate_histogram = bool(cfg.get("generate_histogram", True))
 
     print("\n============================================================")
     print("OLED DISPLAY QUALITY VALIDATOR (Simple + ML-pluggable)")
@@ -973,47 +977,48 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
         bad_absolute=bad_absolute,
         higher_is_better=higher_is_better,
     )
-    hist_path = os.path.join(output_dir, "histogram_with_stats.png")
-    hist_title = "Patch Similarity Histogram" if higher_is_better else "Patch Distance Histogram"
-    plot_histogram_with_stats(
-        distances,
-        hist_path,
-        title=hist_title,
-        threshold=bad_thr,
-        overall_score=overall_score,
-        overall_label="Quick score",
-        higher_is_better=higher_is_better,
-    )
-    print(f"Saved: {hist_path}")
+    if generate_histogram:
+        hist_path = os.path.join(output_dir, "histogram_with_stats.png")
+        hist_title = "Patch Similarity Histogram" if higher_is_better else "Patch Distance Histogram"
+        plot_histogram_with_stats(
+            distances,
+            hist_path,
+            title=hist_title,
+            threshold=bad_thr,
+            overall_score=overall_score,
+            overall_label="Quick score",
+            higher_is_better=higher_is_better,
+        )
+        print(f"Saved: {hist_path}")
 
     # Visuals + analysis maps
-    ref_np = ref.detach().cpu().permute(1, 2, 0).numpy()
-    cap_np = cap.detach().cpu().permute(1, 2, 0).numpy()
+    if generate_visuals:
+        ref_np = ref.detach().cpu().permute(1, 2, 0).numpy()
+        cap_np = cap.detach().cpu().permute(1, 2, 0).numpy()
+        print("Generating luma/log-radiance/contour maps...")
+        analysis_outputs = generate_analysis_maps(
+            ref_np, cap_np, coords_np, distances, H, W, P, S, edge_band, output_dir,
+            higher_is_better=higher_is_better,
+        )
+        for path in analysis_outputs.values():
+            print(f"Saved: {path}")
 
-    print("Generating luma/log-radiance/contour maps...")
-    analysis_outputs = generate_analysis_maps(
-        ref_np, cap_np, coords_np, distances, H, W, P, S, edge_band, output_dir,
-        higher_is_better=higher_is_better,
-    )
-    for path in analysis_outputs.values():
-        print(f"Saved: {path}")
+        if heatmap_style in ("pixelated", "all"):
+            outp = os.path.join(output_dir, "heatmap_pixelated_scores.png")
+            save_heatmap_pixelated(cap_np, coords_np, distances, H, W, P, edge_band, outp,
+                                   alpha=alpha, score_mode=score_mode, score_topk=score_topk,
+                                   edge_mask=masks["edge"], higher_is_better=higher_is_better)
+            print(f"Saved: {outp}")
 
-    if heatmap_style in ("pixelated", "all"):
-        outp = os.path.join(output_dir, "heatmap_pixelated_scores.png")
-        save_heatmap_pixelated(cap_np, coords_np, distances, H, W, P, edge_band, outp,
-                               alpha=alpha, score_mode=score_mode, score_topk=score_topk,
-                               edge_mask=masks["edge"], higher_is_better=higher_is_better)
-        print(f"Saved: {outp}")
-
-    if heatmap_style in ("hybrid", "all"):
-        outp = os.path.join(output_dir, "heatmap_hybrid_scores.png")
-        save_heatmap_hybrid(cap_np, coords_np, distances, H, W, P, edge_band, outp,
-                            alpha=alpha, score_mode=score_mode, score_topk=score_topk,
-                            edge_mask=masks["edge"], higher_is_better=higher_is_better)
-        print(f"Saved: {outp}")
+        if heatmap_style in ("hybrid", "all"):
+            outp = os.path.join(output_dir, "heatmap_hybrid_scores.png")
+            save_heatmap_hybrid(cap_np, coords_np, distances, H, W, P, edge_band, outp,
+                                alpha=alpha, score_mode=score_mode, score_topk=score_topk,
+                                edge_mask=masks["edge"], higher_is_better=higher_is_better)
+            print(f"Saved: {outp}")
 
     # Worst patch crops (simple + helpful)
-    if topn_patches > 0:
+    if generate_visuals and topn_patches > 0:
         print(f"Saving top-{topn_patches} worst patches...")
         order = np.argsort(distances)
         idx = order[:topn_patches] if higher_is_better else order[-topn_patches:][::-1]
@@ -1119,13 +1124,13 @@ def main():
 
     # Heatmaps
     parser.add_argument("--heatmap_style", default="all",
-                        choices=["pixelated", "hybrid", "all"],
+                        choices=["none", "pixelated", "hybrid", "all"],
                         help="Which heatmaps to generate")
     parser.add_argument("--alpha", type=float, default=0.4, help="Overlay alpha (0..1)")
 
     # Per-patch text rendering
     parser.add_argument("--score_mode", default="all",
-                        choices=["all", "all_sparse", "topk", "edge_topk"],
+                        choices=["none", "all", "all_sparse", "topk", "edge_topk"],
                         help="How to show patch scores on heatmaps (all = every cell)")
     parser.add_argument("--score_topk", type=int, default=30,
                         help="K for topk/edge_topk modes")
@@ -1137,6 +1142,21 @@ def main():
         "--score_is_distance",
         action="store_true",
         help="Interpret scores as distance (higher = worse). Default is similarity.",
+    )
+    parser.add_argument(
+        "--no_visuals",
+        action="store_true",
+        help="Skip heatmaps, contour, luma/log maps, and patch crops.",
+    )
+    parser.add_argument(
+        "--no_histogram",
+        action="store_true",
+        help="Skip histogram plot output.",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast mode: skips visuals, histogram, and per-patch text.",
     )
 
     # Clustering thresholds (local)
@@ -1162,6 +1182,14 @@ def main():
         use_ml = False
     elif args.use_ml:
         use_ml = True
+
+    # ---- speed flags ----
+    if args.fast:
+        args.no_visuals = True
+        args.no_histogram = True
+        args.score_mode = "none"
+        args.heatmap_style = "none"
+        args.topn_patches = 0
 
     # ---- strict mode enforcement ----
     if args.no_defaults:
@@ -1200,6 +1228,8 @@ def main():
         "bad_absolute": args.bad_absolute,
         "min_cluster": args.min_cluster,
         "score_is_similarity": not args.score_is_distance,
+        "generate_visuals": not args.no_visuals,
+        "generate_histogram": not args.no_histogram,
         "thresholds": {
             "good": 0.01,     # keep your defaults here
             "warning": 0.05,
