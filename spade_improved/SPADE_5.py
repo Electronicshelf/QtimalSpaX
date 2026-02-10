@@ -36,6 +36,11 @@ from Toolbox.quick_metric import QUICK
 from misc.utils import load_config, get_image_pairs, save_scores_to_file
 from misc.device import resolve_device
 
+try:
+    torch.backends.nnpack.enabled = False
+except Exception:
+    pass
+
 # =============================================================================
 # Utilities
 # =============================================================================
@@ -285,7 +290,14 @@ def _extract_quick_score(result):
     return float(result)
 
 
-def compute_distances_batched(ref_patches, cap_patches, batch_size, use_ml=True, overall_pair=None):
+def compute_distances_batched(
+    ref_patches,
+    cap_patches,
+    batch_size,
+    use_ml=True,
+    overall_pair=None,
+    quick_overrides=None,
+):
     """
     returns numpy float32 scores (N,)
     """
@@ -293,6 +305,8 @@ def compute_distances_batched(ref_patches, cap_patches, batch_size, use_ml=True,
     config_path = "/Users/system_box/PycharmProjects/QtimalSpaX/config.yaml"
 
     config = load_config(config_path)
+    if quick_overrides:
+        config.update(quick_overrides)
     quick = QUICK(config)
     overall_score = None
     if overall_pair is not None:
@@ -938,6 +952,7 @@ def validate_oled_display(ref_path, cap_path, output_dir, cfg):
         batch_size=batch,
         use_ml=use_ml,
         overall_pair=(ref.unsqueeze(0), cap.unsqueeze(0)),
+        quick_overrides=cfg.get("quick_overrides"),
     )
 
     # Regions
@@ -1158,6 +1173,14 @@ def main():
         action="store_true",
         help="Fast mode: skips visuals, histogram, and per-patch text.",
     )
+    parser.add_argument("--cell_stride", type=int, default=None,
+                        help="HIK speed: sample every Nth cell (>=1).")
+    parser.add_argument("--feature_layers", type=int, default=None,
+                        help="HIK speed: number of feature layers to use.")
+    parser.add_argument("--hist_levels", default=None,
+                        help="HIK speed: histogram levels (e.g. \"1,2,4\").")
+    parser.add_argument("--w_hpf", type=float, default=None,
+                        help="HIK speed: set 0 to disable FAN heatmaps.")
 
     # Clustering thresholds (local)
     parser.add_argument("--bad_mode", default="percentile", choices=["percentile", "absolute"],
@@ -1190,6 +1213,16 @@ def main():
         args.score_mode = "none"
         args.heatmap_style = "none"
         args.topn_patches = 0
+        if args.stride < args.patch:
+            args.stride = args.patch
+        if args.cell_stride is None:
+            args.cell_stride = 2
+        if args.feature_layers is None:
+            args.feature_layers = 1
+        if args.hist_levels is None:
+            args.hist_levels = "1,2,4"
+        if args.w_hpf is None:
+            args.w_hpf = 0.0
 
     # ---- strict mode enforcement ----
     if args.no_defaults:
@@ -1212,6 +1245,16 @@ def main():
     if requested_device == "mps" and args.device.type != "mps":
         print("WARNING: MPS requested but not available. Falling back to CPU.")
 
+    quick_overrides = {}
+    if args.cell_stride is not None:
+        quick_overrides["cell_stride"] = args.cell_stride
+    if args.feature_layers is not None:
+        quick_overrides["feature_layers"] = args.feature_layers
+    if args.hist_levels is not None:
+        quick_overrides["hist_levels"] = args.hist_levels
+    if args.w_hpf is not None:
+        quick_overrides["w_hpf"] = args.w_hpf
+
     cfg = {
         "patch_size": args.patch,
         "stride": args.stride,
@@ -1230,6 +1273,7 @@ def main():
         "score_is_similarity": not args.score_is_distance,
         "generate_visuals": not args.no_visuals,
         "generate_histogram": not args.no_histogram,
+        "quick_overrides": quick_overrides,
         "thresholds": {
             "good": 0.01,     # keep your defaults here
             "warning": 0.05,
